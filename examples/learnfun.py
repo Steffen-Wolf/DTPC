@@ -2,14 +2,8 @@ import numpy as np
 from dask.multiprocessing import get
 
 from torchy.utils import timeit
-
-import torch
-from torch.nn.functional import conv2d
-from torch.autograd import Variable
-
-import sklearn
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+from torchy.learning import learning
 
 if __name__ == '__main__':
 
@@ -22,20 +16,14 @@ if __name__ == '__main__':
                                                         train_size=400,
                                                         random_state=4)
 
-    def train(rf, X_train, y_train):
-        rf.fit(X_train, y_train)
-        return rf
-
-    def predict(rf, X_test):
-        return rf.predict_proba(X_test)
-
-    dsk = {'RF': RandomForestClassifier(max_depth=30, random_state=2),
+    dsk = {"classifier_type":"RandomForest",
+           "RF": (learning.getClassifier, "classifier_type"),
            "X_train" : X_train,
            "X_test"  : X_test,
            "y_train" : y_train,
            "y_test"  : y_test,
-           'trained-RF': (train, 'RF', "X_train", "y_train"),
-           'predict': (predict, 'trained-RF', 'X_test')}
+           'trained-RF': (learning.train, 'RF', "X_train", "y_train"),
+           'predict': (learning.predict, 'trained-RF', 'X_test')}
 
     with timeit() as time_info:
         output = get(dsk, 'predict')
