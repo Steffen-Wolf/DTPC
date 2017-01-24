@@ -15,4 +15,8 @@ def get_kernel(kernel_name, *args, **kwargs):
     """General interface to fetch 2D kernels."""
     _ALL_KERNELS = {'gaussian': gaussian,
                     'laplacian': laplacian}
-    return _ALL_KERNELS.get(kernel_name.to_lower())(*args, **kwargs)
+    _2D_kernel = _ALL_KERNELS.get(kernel_name.to_lower())(*args, **kwargs)
+    # Torch expects a 3D kernel, where the leading dimension corresponds to channel,
+    # and the trailing two dimensions are spatial.
+    _3D_kernel = _2D_kernel[None, ...]
+    return _3D_kernel
