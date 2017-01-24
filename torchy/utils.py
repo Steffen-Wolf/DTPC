@@ -22,3 +22,13 @@ def timeit():
     yield timeit_info
     later = time.time()
     timeit_info.elapsed_time = later - now
+
+
+def simulate_delay(duration):
+    """Delay a given function by a certain `duration` (in seconds)."""
+    def _decorator(function):
+        def _function(*args, **kwargs):
+            time.sleep(duration)
+            return function(*args, **kwargs)
+        return _function
+    return _decorator
