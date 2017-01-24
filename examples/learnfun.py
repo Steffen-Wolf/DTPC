@@ -17,7 +17,7 @@ if __name__ == '__main__':
                                                         random_state=4)
 
     dsk = {"classifier_type":"RandomForest",
-           "RF": (learning.getClassifier, "classifier_type"),
+           "RF": (learning.get_classifier, "classifier_type"),
            "X_train" : X_train,
            "X_test"  : X_test,
            "y_train" : y_train,

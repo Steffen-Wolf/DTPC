@@ -1,7 +1,10 @@
 """This file contains all filters (kernels), i.e. icky-yucky image processing stuff."""
 
 import numpy as np
+import vigra
 
+def prepare_data(data, slice):
+    return data[slice]
 
 def gaussian(sigma, filter_size):
     pass
@@ -9,7 +12,6 @@ def gaussian(sigma, filter_size):
 
 def laplacian(sigma):
     pass
-
 
 def get_kernel(kernel_name, *args, **kwargs):
     """General interface to fetch 2D kernels."""
