@@ -86,7 +86,6 @@ def dummy_feature_prediciton(request):
     output = np.empty(shape)
     for i, s in enumerate(sigmas):
         for j, f in enumerate(filters):
-            print(i,s,j,f)
             output[i, j] = get_filter_function(f)(data[0, 0].astype(np.float32), s)
     return output
 
@@ -106,7 +105,7 @@ if __name__ == '__main__':
 
     with timeit() as time_info:
         output = get(dsk, target)
-        print(output[0].shape, output[1].shape)
+    print(output[0].shape, output[1].shape)
 
     print("Time Elapsed: {}".format(time_info.elapsed_time))
 
