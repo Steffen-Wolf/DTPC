@@ -140,6 +140,8 @@ class FeatureSuite(object):
     MED_KERNEL_SIZE = 9
     BIG_KERNEL_SIZE = 15
 
+    EPS = 0.0001
+
     def __init__(self, ndim=2, num_workers=4):
         assert ndim in [2, 3]
         self.num_workers = num_workers
@@ -275,7 +277,6 @@ class FeatureSuite(object):
             return d00 ** 2 + d11 ** 2
 
     def eighess(self, *dnms):
-        EPS = 0.0001
         if self.ndim == 3:
             d00, d01, d02, d11, d12, d22 = dnms[0], dnms[1], dnms[2], dnms[3], dnms[4], dnms[5]
 
@@ -297,13 +298,23 @@ class FeatureSuite(object):
             detB = B00 * (B11 * B22 - B12 * B12) - \
                    B01 * (B01 * B22 - B12 * B02) + \
                    B02 * (B01 * B12 - B11 * B02)
-            # TODO FML
-            pass
+            r = detB / 2.
+
+            phi = torch.zeros(*detB.size())
+            phi[r <= -1] = np.pi / 3.
+            phi[r >= 1] = 0.
+            phi[-1 < r < 1] = torch.acos(r[-1 < r < 1]) / 3.
+
+            eig1 = T + 2 * p * torch.cos(phi)
+            eig3 = T + 2 * p * torch.cos(phi + ((2. * np.pi) / 3.))
+            eig2 = 3 * T - eig1 - eig3
+            return torch.cat((eig1, eig2, eig3), 1)
+
         else:
             d00, d01, d11 = dnms[0], dnms[1], dnms[2]
             T = d00 + d11
             D = d00 * d11 - d01 * d01
-            K = torch.sqrt(4. - D + EPS)
+            K = torch.sqrt(4. - D + self.EPS)
             L1 = T * (0.5 + 1/K)
             L2 = T * (0.5 - 1/K)
             return torch.cat((L1, L2), 1)
