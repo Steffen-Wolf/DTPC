@@ -6,6 +6,8 @@ import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
 
+import dask.threaded as dth
+
 from torchy.utils import timeit
 
 torch.set_num_threads(8)
@@ -138,9 +140,9 @@ class FeatureSuite(object):
     MED_KERNEL_SIZE = 9
     BIG_KERNEL_SIZE = 15
 
-    def __init__(self, ndim=2):
+    def __init__(self, ndim=2, num_workers=4):
         assert ndim in [2, 3]
-
+        self.num_workers = num_workers
         self.cache = {}
         self.ndim = ndim
 
@@ -148,7 +150,8 @@ class FeatureSuite(object):
     def conv(self):
         return conv2d if self.ndim == 2 else conv3d
 
-    def stack_filters(self, *filters, convert_to_variable=True):
+    def stack_filters(self, *filters, **kwargs):
+        convert_to_variable = kwargs.get('convert_to_variable', True)
         if self.ndim == 2:
             kernel_tensor = np.array([filter_.reshape(-1, 1)[None, ...] for filter_ in filters])
         else:
@@ -241,9 +244,9 @@ class FeatureSuite(object):
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
         input_tensor = to_variable(input_tensor)
         if self.ndim == 2:
-            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 2)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2)).data
         else:
-            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 2, 4)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2, 4)).data
 
     def d2(self, input_tensor):
         # Gradient along axis 2
@@ -252,7 +255,7 @@ class FeatureSuite(object):
         if self.ndim == 2:
             raise RuntimeError
         else:
-            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 4, 2)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 4, 2)).data
 
     def dmag(self, *dns):
         if self.ndim == 3:
@@ -294,7 +297,7 @@ class FeatureSuite(object):
             detB = B00 * (B11 * B22 - B12 * B12) - \
                    B01 * (B01 * B22 - B12 * B02) + \
                    B02 * (B01 * B12 - B11 * B02)
-            # TODO screw me
+            # TODO FML
             pass
         else:
             d00, d01, d11 = dnms[0], dnms[1], dnms[2]
@@ -304,6 +307,43 @@ class FeatureSuite(object):
             L1 = T * (0.5 + 1/K)
             L2 = T * (0.5 - 1/K)
             return torch.cat((L1, L2), 1)
+
+    @property
+    def dsk(self):
+        if self.ndim == 2:
+            # 2D
+            _dsk = {'input': None,
+                    'smooth': (self.presmoothing, 'input'),
+                    'd0': (self.d0, 'smooth'),
+                    'd1': (self.d1, 'smooth'),
+                    'dmag': (self.dmag, 'd0', 'd1'),
+                    'd00': (self.d0, 'd0'),
+                    'd01': (self.d1, 'd0'),
+                    'd11': (self.d1, 'd1'),
+                    'laplacian': (self.laplacian, 'd00', 'd11'),
+                    'eighess': (self.eighess, 'd00', 'd01', 'd11')}
+        else:
+            # 3D
+            _dsk = {'input': None,
+                    'smooth': (self.presmoothing, 'input'),
+                    'd0': (self.d0, 'smooth'),
+                    'd1': (self.d1, 'smooth'),
+                    'd2': (self.d2, 'smooth'),
+                    'dmag': (self.dmag, 'd0', 'd1', 'd2'),
+                    'd00': (self.d0, 'd0'),
+                    'd01': (self.d1, 'd0'),
+                    'd02': (self.d2, 'd0'),
+                    'd11': (self.d1, 'd1'),
+                    'd12': (self.d2, 'd1'),
+                    'd22': (self.d2, 'd2'),
+                    'laplacian': (self.laplacian, 'd00', 'd11', 'd22'),
+                    'eighess': (self.eighess, 'd00', 'd01', 'd02', 'd11', 'd12', 'd22')}
+        return _dsk
+
+    def compute_features(self, input_tensor, *feature_names):
+        _dsk = self.dsk
+        _dsk.update({'input': input_tensor})
+        return dth.get(_dsk, list(feature_names), num_workers=self.num_workers)
 
     def _test_presmoothing(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
