@@ -1,6 +1,6 @@
 from __future__ import print_function
 import numpy as np
-from dask.multiprocessing import get
+from dask.threaded import get
 
 import vigra
 
@@ -14,17 +14,14 @@ import os
 import dask.array as da
 
 def dummy_feature_prediciton(data, sigmas):
-    shape = [len(sigmas), 2] + list(data.shape)
+    shape = [len(sigmas), 1] + list(data.shape)
     output = np.empty(shape)
-    print(shape)
     for i,s in enumerate(sigmas):
-        vigra.filters.gaussianGradientMagnitude(data, 2, out=output[i, 0])
-        vigra.filters.gaussianGradientMagnitude(data, 2, out=output[i, 1])
+        output[i, 0] = vigra.filters.gaussianGradientMagnitude(data, s)
     return output
 
 
 if __name__ == '__main__':
-
     # Create a random dataset
     rng = np.random.RandomState(1)
     X = np.sort(200 * rng.rand(600, 1) - 100, axis=0)
@@ -34,18 +31,16 @@ if __name__ == '__main__':
     dset = f['volume/data']
     x = da.from_array(dset, chunks=(10, 10, 1, 1))
     
-    dsk = {"image": dset[0:30,0:30,0,0],
-            "RF":"vigraRF",
+    dsk = {"image": dset[0:30,0:30,0,0].astype(np.float32),
+            "RF":"RandomForest",
             "RF_File": 'datasets/hackathon_flyem_forest.h5',
-            "sigmas": [1,3,5],
-            "trained-RF": (learning.get_classifier, "classifier_type", "RF_File"),
+            "sigmas": np.arange(17)/10+2,
+            "trained-RF": (learning.get_classifier, "RF", "RF_File"),
             "computed-features": (dummy_feature_prediciton, "image", "sigmas"),
-            'predict': (learning.predict, 'trained-RF', 'X_test')}
-
+            'predicted-image': (learning.image_prediction, "RF", "RF_File",'computed-features')}
 
     with timeit() as time_info:
-        output = get(dsk, 'computed-features')
-        print(output)
+        output = get(dsk, 'predicted-image')
 
     print("Time Elapsed: {}".format(time_info.elapsed_time))
 
