@@ -167,12 +167,14 @@ class FeatureSuite(object):
         # Separable convolutions
         # Get number of outputs
         num_outputs = kernel_tensor.size()[0]
-        bias = to_variable(np.zeros(shape=(num_outputs,)))
+        bias = to_variable(np.zeros(shape=(num_outputs,))) if num_outputs != 1 else None
 
         if self.ndim == 3:
             conved_012 = self.conv(input_tensor, kernel_tensor)
-            conved_201 = self.conv(conved_012, kernel_tensor.permute(0, 1, 4, 2, 3))
-            conved_120 = self.conv(conved_201, kernel_tensor.permute(0, 1, 3, 4, 2))
+            conved_201 = self.conv(conved_012, kernel_tensor.permute(0, 1, 4, 2, 3),
+                                   groups=num_outputs, bias=bias)
+            conved_120 = self.conv(conved_201, kernel_tensor.permute(0, 1, 3, 4, 2),
+                                   groups=num_outputs, bias=bias)
             output = conved_120
         else:
             conved_01 = self.conv(input_tensor, kernel_tensor)
@@ -228,8 +230,80 @@ class FeatureSuite(object):
         all_conved = self.channel_to_batch(torch.cat((conved_small, conved_med, conved_big), 1))
         return all_conved
 
-    def image_gradients(self, presmoothed):
-        pass
+    def d0(self, input_tensor):
+        # Gradient along axis 0
+        kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
+        input_tensor = to_variable(input_tensor)
+        return self.sconv(input_tensor, kernel_tensor).data
+
+    def d1(self, input_tensor):
+        # Gradient along axis 1
+        kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
+        input_tensor = to_variable(input_tensor)
+        if self.ndim == 2:
+            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 2)).data
+        else:
+            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 2, 4)).data
+
+    def d2(self, input_tensor):
+        # Gradient along axis 2
+        kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
+        input_tensor = to_variable(input_tensor)
+        if self.ndim == 2:
+            raise RuntimeError
+        else:
+            return self.sconv(input_tensor, kernel_tensor.transpose(0, 1, 3, 4, 2)).data
+
+    def dmag(self, *dns):
+        if self.ndim == 3:
+            d0, d1, d2 = dns[0], dns[1], dns[2]
+            # No inplace ops, might cause threading bugs
+            return torch.sqrt(d0 ** 2 + d1 ** 2 + d2 ** 2)
+        else:
+            d0, d1 = dns[0], dns[1]
+            return torch.sqrt(d0 ** 2 + d1 ** 2)
+
+    def laplacian(self, *dnns):
+        if self.ndim == 3:
+            d00, d11, d22 = dnns[0], dnns[1], dnns[2]
+            return d00 ** 2 + d11 ** 2 + d22 ** 2
+        else:
+            d00, d11 = dnns[0], dnns[1]
+            return d00 ** 2 + d11 ** 2
+
+    def eighess(self, *dnms):
+        EPS = 0.0001
+        if self.ndim == 3:
+            d00, d01, d02, d11, d12, d22 = dnms[0], dnms[1], dnms[2], dnms[3], dnms[4], dnms[5]
+
+            p1 = d01 ** 2 + d02 ** 2 + d12 ** 2
+
+            T = (d00 + d11 + d22)/3
+
+            p2 = (d00 - T) ** 2 + (d11 - T) ** 2 + (d22 - T) ** 2 + 2 * p1
+            p = torch.sqrt(p2 / 6.)
+            p_inv = (1./p)
+
+            B00 = p_inv * (d00 - T)
+            B01 = p_inv * d01
+            B02 = p_inv * d02
+            B11 = p_inv * (d11 - T)
+            B12 = p_inv * d12
+            B22 = p_inv * (d22 - T)
+
+            detB = B00 * (B11 * B22 - B12 * B12) - \
+                   B01 * (B01 * B22 - B12 * B02) + \
+                   B02 * (B01 * B12 - B11 * B02)
+            # TODO screw me
+            pass
+        else:
+            d00, d01, d11 = dnms[0], dnms[1], dnms[2]
+            T = d00 + d11
+            D = d00 * d11 - d01 * d01
+            K = torch.sqrt(4. - D + EPS)
+            L1 = T * (0.5 + 1/K)
+            L2 = T * (0.5 - 1/K)
+            return torch.cat((L1, L2), 1)
 
     def _test_presmoothing(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
@@ -244,11 +318,11 @@ class FeatureSuite(object):
 if __name__ == '__main__':
     fs = FeatureSuite()
 
-    fs._test_presmoothing((1, 1, 1000, 1000))
+    fs._test_presmoothing((1, 1, 2000, 2000))
     print("---------------------------------")
 
-    fs._test_presmoothing((1, 1, 1000, 1000))
+    fs._test_presmoothing((1, 1, 2000, 2000))
     print("---------------------------------")
 
-    fs._test_presmoothing((1, 1, 1000, 1000))
+    fs._test_presmoothing((1, 1, 2000, 2000))
 
