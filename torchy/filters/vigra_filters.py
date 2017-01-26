@@ -19,7 +19,7 @@ def get_filter_function(filter_name):
 
 def dummy_feature_prediciton(request):
     # load data slice in 
-    print request["roi_with_halo"]
+    print(request["roi_with_halo"])
     data = load_raw_data(request["data_filename"], request["roi_with_halo"])
     features = request["features"]
     sigmas = np.unique([f['sigma'] for f in features])

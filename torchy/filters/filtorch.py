@@ -2,6 +2,8 @@
 
 import numpy as np
 
+import h5py as h5
+
 import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
@@ -10,7 +12,7 @@ from dask.threaded import get
 # from dask.async import get_sync as get
 # from dask.multiprocessing import get
 
-from torchy.utils import timeit
+from torchy.utils import timeit, reshape_volume_for_torch
 
 torch.set_num_threads(2)
 
@@ -405,6 +407,18 @@ class FeatureSuite(object):
         _dsk = self.dsk
         _dsk.update({'input': input_tensor})
         return get(_dsk, 'output', num_workers=self.num_workers)
+
+    def remove_halo(self, tensor, halo_size):
+        if self.ndim == 2:
+            return tensor[:, :, halo_size:-halo_size, halo_size:-halo_size]
+        else:
+            return tensor[:, :, halo_size:-halo_size, halo_size:-halo_size, halo_size:-halo_size]
+
+    def process_request(self, request):
+        with h5.File(request['data_filename'], 'r+') as h5_file:
+            input_tensor = reshape_volume_for_torch(h5_file[request['roi_with_halo']])
+        feature_tensor = self.remove_halo(self.compute_features(input_tensor), request['halo_size'])
+        return feature_tensor
 
     def _test_presmoothing(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
