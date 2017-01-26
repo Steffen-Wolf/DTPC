@@ -30,7 +30,7 @@ class Controller(object):
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
-        self.classifier_type = "VigraRF"
+        self.classifier_type = "RandomForest"
         self.output_file = None
 
     def clear_dsk(self):
@@ -76,7 +76,7 @@ class Controller(object):
             with h5py.File(self.output_file, "w") as f:
                 with h5py.File(if_set.pop(), "r") as raw_f:
                     # TODO: replace the RF location by json defined file path
-                    rf_file = "datasets/hackathon_flyem_forest.h5"
+                    rf_file = "datasets/hackathon_flyem_forest_sklearn.dump"
                     n_classes = learning.count_labels(learning.get_classifier(self.classifier_type, filename=rf_file))
                     prediction_shape = [1, n_classes] + list(raw_f["volume/data"].shape)[:-1]
                 f.create_dataset("data", prediction_shape)

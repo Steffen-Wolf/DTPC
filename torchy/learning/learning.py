@@ -6,9 +6,13 @@ from torchy import utils
 import vigra
 import h5py
 import time
+import cPickle as pickle
 
 def get_classifier(classifier_type, filename=None):
     if classifier_type == 'RandomForest':
+        if filename is not None:
+            print("loading sklearn forest from %s"%filename)
+            return pickle.load(open(filename,"rb"))
         rf = RandomForestClassifier(max_depth=30)
         print("Warning: random forest is trainged with random data...only for debug")
         rf.fit(np.random.rand(20,17), np.random.choice([0,1,2,3],size=20))
