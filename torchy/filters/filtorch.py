@@ -8,8 +8,8 @@ import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
 
-from dask.threaded import get
-# from dask.async import get_sync as get
+# from dask.threaded import get
+from dask.async import get_sync as get
 # from dask.multiprocessing import get
 
 from torchy.utils import timeit, reshape_volume_for_torch
@@ -167,7 +167,7 @@ class FeatureSuite(object):
             kernel_tensor = np.array([filter_.reshape(-1, 1)[None, ...] for filter_ in filters])
         else:
             kernel_tensor = np.array([filter_.reshape(-1, 1, 1)[None, ...] for filter_ in filters])
-        kernel_tensor = to_variable(kernel_tensor) if convert_to_variable else kernel_tensor
+        kernel_tensor = self.to_variable(kernel_tensor) if convert_to_variable else kernel_tensor
         return kernel_tensor
 
     def pad_input(self, input_tensor, kernel_size):
@@ -567,7 +567,7 @@ class FeatureSuite(object):
 
 
 if __name__ == '__main__':
-    fs = FeatureSuite(ndim=3, num_workers=2)
+    fs = FeatureSuite(ndim=3, num_workers=6, device='cpu')
 
     # print("---- Testing Presmoothing ----")
     # fs._test_presmoothing((1, 1, 2000, 2000))
@@ -596,8 +596,8 @@ if __name__ == '__main__':
     # print("---- Testing dsk 2D ----")
     # fs._test_dsk((1, 1, 2000, 2000))
 
-    # print("---- Testing Presmoothing 3D ----")
-    # fs._test_presmoothing((1, 1, 100, 100, 100))
+    print("---- Testing Presmoothing 3D ----")
+    fs._test_presmoothing((1, 1, 200, 200, 200))
 
     # print("---- Testing d0 3D ----")
     # fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
@@ -608,5 +608,5 @@ if __name__ == '__main__':
     # print("---- Testing eighess3D ----")
     # fs._test_eighess_3d((1, 1, 100, 100, 100))
 
-    print("---- Testing dsk 3D ----")
-    fs._test_dsk((1, 1, 300, 300, 300))
+    # print("---- Testing dsk 3D ----")
+    # fs._test_dsk((1, 1, 200, 200, 200))
