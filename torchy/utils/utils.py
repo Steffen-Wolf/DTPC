@@ -69,17 +69,35 @@ def get_feature_index(r):
     matching request r
     """
 
-    sigmas = np.unique([f['sigma'] for f in r["features"]]).tolist()
-    filters = list(set([f['name'] for f in r["features"]]))
+    feature_names_to_index = {'Gaussian Smoothing': [0],
+                              'Gaussian Gradient Magnitude': [1],
+                              'Laplacian of Gaussian': [2],
+                              'Hessian of Gaussian Eigenvalues': [3, 4]}
+
+    sigma_to_index = {0.3: [0],
+                      0.7: [1],
+                      1.0: [2],
+                      1.6: [3],
+                      3.5: [4],
+                      5.0: [5],
+                      10.0: [6]}
+
     s_list = []
     f_list = []
-    for f in r["features"]:
-        for k in range(get_filter_size(f["name"])):
-            s_list.append(sigmas.index(f["sigma"]))
-            f_list.append(filters.index(f["name"]))
+
+    for f in r['features']:
+        feature_index = feature_names_to_index[f['name']]
+        s_list.extend(sigma_to_index[f['sigma']] * len(feature_index))
+        f_list.extend(feature_index)
+
     return s_list, f_list
 
 
 def reshape_volume_for_torch(volume):
     assert volume.ndim == 3 or volume.ndim == 2
     return volume[None, None, ...]
+
+
+if __name__ == '__main__':
+    print(get_feature_index({'features': [{'name': 'Hessian of Gaussian Eigenvalues', 'sigma': 1.6},
+                                          {'name': 'Hessian of Gaussian Eigenvalues', 'sigma': 10.}]}))
