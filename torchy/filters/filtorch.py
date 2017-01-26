@@ -6,11 +6,13 @@ import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
 
-import dask.threaded as dth
+from dask.threaded import get
+# from dask.async import get_sync as get
+# from dask.multiprocessing import get
 
 from torchy.utils import timeit
 
-torch.set_num_threads(8)
+torch.set_num_threads(2)
 
 
 def to_variable(tensor, device='cpu'):
@@ -141,12 +143,18 @@ class FeatureSuite(object):
     BIG_KERNEL_SIZE = 15
 
     EPS = 0.0001
+    ONE_BY_THREE = 0.3333333
+    ONE_BY_SIX = 0.1666667
+    ONE_BY_TWO = 0.5
 
-    def __init__(self, ndim=2, num_workers=4):
+    def __init__(self, ndim=2, reflect_pad_input=True, num_workers=4, device='cpu'):
         assert ndim in [2, 3]
+        # Assignments
+        self.ndim = ndim
+        self.reflect_pad_input = reflect_pad_input
         self.num_workers = num_workers
         self.cache = {}
-        self.ndim = ndim
+        self.device = device
 
     @property
     def conv(self):
@@ -168,21 +176,20 @@ class FeatureSuite(object):
         padded_input_tensor = np.pad(input_tensor, pad_spec, 'reflect')
         return padded_input_tensor
 
-    def sconv(self, input_tensor, kernel_tensor):
+    def sconv(self, input_tensor, kernel_tensor, padding=0, bias=None):
         # Separable convolutions
         # Get number of outputs
         num_outputs = kernel_tensor.size()[0]
-        bias = to_variable(np.zeros(shape=(num_outputs,))) if num_outputs != 1 else None
 
         if self.ndim == 3:
-            conved_012 = self.conv(input_tensor, kernel_tensor)
+            conved_012 = self.conv(input_tensor, kernel_tensor, padding=padding)
             conved_201 = self.conv(conved_012, kernel_tensor.permute(0, 1, 4, 2, 3),
                                    groups=num_outputs, bias=bias)
             conved_120 = self.conv(conved_201, kernel_tensor.permute(0, 1, 3, 4, 2),
                                    groups=num_outputs, bias=bias)
             output = conved_120
         else:
-            conved_01 = self.conv(input_tensor, kernel_tensor)
+            conved_01 = self.conv(input_tensor, kernel_tensor, padding=padding)
             conved_10 = self.conv(conved_01, kernel_tensor.permute(0, 1, 3, 2), groups=num_outputs,
                                   bias=bias)
             output = conved_10
@@ -194,15 +201,39 @@ class FeatureSuite(object):
         else:
             return tensor.permute(1, 0, 2, 3)
 
+    def to_variable(self, tensor):
+        return to_variable(tensor, device=self.device)
+
     def presmoothing(self, input_tensor):
 
-        input_tensor_small = to_variable(self.pad_input(input_tensor, self.SMALL_KERNEL_SIZE))
-        input_tensor_med = to_variable(self.pad_input(input_tensor, self.MED_KERNEL_SIZE))
-        input_tensor_big = to_variable(self.pad_input(input_tensor, self.BIG_KERNEL_SIZE))
+        input_tensor_big = input_tensor_med = input_tensor_small = self.to_variable(input_tensor)
 
         small_kernel_sigmas = [0.3, 0.7, 1.0]
         med_kernel_sigmas = [1.6]
         big_kernel_sigmas = [3.5, 5.0, 10.0]
+
+        small_kernel_padding = self.SMALL_KERNEL_SIZE // 2
+        med_kernel_padding = self.MED_KERNEL_SIZE // 2
+        big_kernel_padding = self.BIG_KERNEL_SIZE // 2
+
+        # This is required because there's a bug in pytorch where group convolution requires
+        # a bias which is not None. We define the bias once, transfer to GPU and cache it for
+        # future use.
+        if 'small_kernel_bias' not in self.cache.keys():
+            small_kernel_bias = self.to_variable(np.zeros(shape=len(small_kernel_sigmas)))
+            self.cache.update({'small_kernel_bias': small_kernel_bias})
+        else:
+            small_kernel_bias = self.cache['small_kernel_bias']
+
+        # No bias for medium kernels (because there's just one feature, i.e. no grouped conv
+        # required)
+        med_kernel_bias = None
+
+        if 'big_kernel_bias' not in self.cache.keys():
+            big_kernel_bias = self.to_variable(np.zeros(shape=len(big_kernel_sigmas)))
+            self.cache.update({'big_kernel_bias': big_kernel_bias})
+        else:
+            big_kernel_bias = self.cache['big_kernel_bias']
 
         # No need to launch the kernel at every run
         if 'kernel_tensor_small' not in self.cache.keys():
@@ -228,85 +259,96 @@ class FeatureSuite(object):
             kernel_tensor_big = self.cache['kernel_tensor_big']
 
         # Compute convolutions
-        conved_small = self.sconv(input_tensor_small, kernel_tensor_small).data
-        conved_med = self.sconv(input_tensor_med, kernel_tensor_med).data
-        conved_big = self.sconv(input_tensor_big, kernel_tensor_big).data
+        conved_small = self.sconv(input_tensor_small, kernel_tensor_small,
+                                  padding=small_kernel_padding, bias=small_kernel_bias).data
+        conved_med = self.sconv(input_tensor_med, kernel_tensor_med,
+                                padding=med_kernel_padding, bias=med_kernel_bias).data
+        conved_big = self.sconv(input_tensor_big, kernel_tensor_big,
+                                padding=big_kernel_padding, bias=big_kernel_bias).data
         # Concatenate results and move to batch axis
         all_conved = self.channel_to_batch(torch.cat((conved_small, conved_med, conved_big), 1))
         return all_conved
 
     def d0(self, input_tensor):
         # Gradient along axis 0
+        input_tensor = Variable(input_tensor)
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        input_tensor = to_variable(input_tensor)
-        return self.sconv(input_tensor, kernel_tensor).data
+        return self.sconv(input_tensor, kernel_tensor, padding=1).data
 
     def d1(self, input_tensor):
         # Gradient along axis 1
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        input_tensor = to_variable(input_tensor)
+        input_tensor = Variable(input_tensor)
         if self.ndim == 2:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2), padding=1).data
         else:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2, 4)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2, 4), padding=1).data
 
     def d2(self, input_tensor):
         # Gradient along axis 2
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        input_tensor = to_variable(input_tensor)
+        input_tensor = Variable(input_tensor)
         if self.ndim == 2:
             raise RuntimeError
         else:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 4, 2)).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 4, 2), padding=1).data
 
     def dmag(self, *dns):
         if self.ndim == 3:
             d0, d1, d2 = dns[0], dns[1], dns[2]
             # No inplace ops, might cause threading bugs
-            return torch.sqrt(d0 ** 2 + d1 ** 2 + d2 ** 2)
+            return torch.sqrt(d0 * d0 + d1 * d1 + d2 * d2)
         else:
             d0, d1 = dns[0], dns[1]
-            return torch.sqrt(d0 ** 2 + d1 ** 2)
+            return torch.sqrt(d0 * d0 + d1 * d1)
 
     def laplacian(self, *dnns):
         if self.ndim == 3:
             d00, d11, d22 = dnns[0], dnns[1], dnns[2]
-            return d00 ** 2 + d11 ** 2 + d22 ** 2
+            return d00 * d00 + d11 * d11 + d22 * d22
         else:
             d00, d11 = dnns[0], dnns[1]
-            return d00 ** 2 + d11 ** 2
+            return d00 * d00 + d11 * d11
 
     def eighess(self, *dnms):
         if self.ndim == 3:
             d00, d01, d02, d11, d12, d22 = dnms[0], dnms[1], dnms[2], dnms[3], dnms[4], dnms[5]
 
-            p1 = d01 ** 2 + d02 ** 2 + d12 ** 2
+            p1 = d01 * d01 + d02 * d02 + d12 * d12
 
-            T = (d00 + d11 + d22)/3
+            T = (d00 + d11 + d22) * self.ONE_BY_THREE
 
-            p2 = (d00 - T) ** 2 + (d11 - T) ** 2 + (d22 - T) ** 2 + 2 * p1
-            p = torch.sqrt(p2 / 6.)
+            d00_minus_T = d00 - T
+            d11_minus_T = d11 - T
+            d22_minus_T = d22 - T
+
+            p2 = d00_minus_T * d00_minus_T + \
+                 d11_minus_T * d11_minus_T + \
+                 d22_minus_T * d22_minus_T + \
+                 2. * p1
+
+            p = torch.sqrt(p2 * self.ONE_BY_SIX)
             p_inv = (1./p)
 
-            B00 = p_inv * (d00 - T)
+            B00 = p_inv * d00_minus_T
             B01 = p_inv * d01
             B02 = p_inv * d02
-            B11 = p_inv * (d11 - T)
+            B11 = p_inv * d11_minus_T
             B12 = p_inv * d12
-            B22 = p_inv * (d22 - T)
+            B22 = p_inv * d22_minus_T
 
             detB = B00 * (B11 * B22 - B12 * B12) - \
                    B01 * (B01 * B22 - B12 * B02) + \
                    B02 * (B01 * B12 - B11 * B02)
-            r = detB / 2.
+            r = detB * self.ONE_BY_TWO
 
             phi = torch.zeros(*detB.size())
-            phi[r <= -1] = np.pi / 3.
+            phi[r <= -1] = np.pi * self.ONE_BY_THREE
             phi[r >= 1] = 0.
-            phi[-1 < r < 1] = torch.acos(r[-1 < r < 1]) / 3.
+            phi[-1 < r < 1] = torch.acos(r[-1 < r < 1]) * self.ONE_BY_THREE
 
             eig1 = T + 2 * p * torch.cos(phi)
-            eig3 = T + 2 * p * torch.cos(phi + ((2. * np.pi) / 3.))
+            eig3 = T + 2 * p * torch.cos(phi + ((2. * np.pi) * self.ONE_BY_THREE))
             eig2 = 3 * T - eig1 - eig3
             return torch.cat((eig1, eig2, eig3), 1)
 
@@ -314,10 +356,17 @@ class FeatureSuite(object):
             d00, d01, d11 = dnms[0], dnms[1], dnms[2]
             T = d00 + d11
             D = d00 * d11 - d01 * d01
-            K = torch.sqrt(4. - D + self.EPS)
-            L1 = T * (0.5 + 1/K)
-            L2 = T * (0.5 - 1/K)
-            return torch.cat((L1, L2), 1)
+            T_by_2 = T * self.ONE_BY_TWO
+            K = torch.sqrt(T_by_2 * T_by_2 - D)
+            eig1 = T_by_2 + K
+            eig2 = T_by_2 - K
+            return torch.cat((eig1, eig2), 1)
+
+    def process_dsk_output(self, *input_features):
+        if self.device == 'cpu':
+            return torch.cat(input_features, 1).numpy()
+        else:
+            return torch.cat(input_features, 1).cpu().numpy()
 
     @property
     def dsk(self):
@@ -332,7 +381,8 @@ class FeatureSuite(object):
                     'd01': (self.d1, 'd0'),
                     'd11': (self.d1, 'd1'),
                     'laplacian': (self.laplacian, 'd00', 'd11'),
-                    'eighess': (self.eighess, 'd00', 'd01', 'd11')}
+                    'eighess': (self.eighess, 'd00', 'd01', 'd11'),
+                    'output': (self.process_dsk_output, 'smooth', 'dmag', 'laplacian', 'eighess')}
         else:
             # 3D
             _dsk = {'input': None,
@@ -348,13 +398,14 @@ class FeatureSuite(object):
                     'd12': (self.d2, 'd1'),
                     'd22': (self.d2, 'd2'),
                     'laplacian': (self.laplacian, 'd00', 'd11', 'd22'),
-                    'eighess': (self.eighess, 'd00', 'd01', 'd02', 'd11', 'd12', 'd22')}
+                    'eighess': (self.eighess, 'd00', 'd01', 'd02', 'd11', 'd12', 'd22'),
+                    'output': (self.process_dsk_output, 'smooth', 'dmag', 'laplacian', 'eighess')}
         return _dsk
 
-    def compute_features(self, input_tensor, *feature_names):
+    def compute_features(self, input_tensor):
         _dsk = self.dsk
         _dsk.update({'input': input_tensor})
-        return dth.get(_dsk, list(feature_names), num_workers=self.num_workers)
+        return get(_dsk, 'output', num_workers=self.num_workers)
 
     def _test_presmoothing(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
@@ -365,15 +416,105 @@ class FeatureSuite(object):
         print("Input shape: {} || Output shape: {}".format(input_shape, presmoothed.size()))
         print("Elapsed time: {}".format(timestats.elapsed_time))
 
+    def _test_gradient(self, input_shape, wrt='0'):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Get gradient func to test
+        grad_func = getattr(self, "d{}".format(wrt))
+        # Time gradient
+        with timeit() as timestats:
+            g = grad_func(presmoothed)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), g.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
+    def _test_dmag_2d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Compute gradients
+        g0 = self.d0(presmoothed)
+        g1 = self.d1(presmoothed)
+        # Compute gradient magnitude
+        with timeit() as timestats:
+            gmag = self.dmag(g0, g1)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), gmag.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
+    def _test_laplacian_2d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Compute gradients
+        g0 = self.d0(presmoothed)
+        g1 = self.d1(presmoothed)
+        g00 = self.d0(g0)
+        g11 = self.d1(g1)
+        # Compute and time laplacian
+        with timeit() as timestats:
+            lap = self.laplacian(g00, g11)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), lap.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
+    def _test_eighess_2d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Compute gradients
+        g0 = self.d0(presmoothed)
+        g1 = self.d1(presmoothed)
+        g00 = self.d0(g0)
+        g01 = self.d1(g0)
+        g11 = self.d1(g1)
+
+        # Compute and time laplacian
+        with timeit() as timestats:
+            eighess = self.laplacian(g00, g01, g11)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), eighess.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
+    def _test_dsk_2d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        print("[+] Starting dsk computation...")
+        with timeit() as timestats:
+            out = self.compute_features(input_array)
+        print("[+] Dsk computation done...")
+        print("Input shape: {} || Output shape: {}".format(input_shape, out.shape))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
 
 if __name__ == '__main__':
-    fs = FeatureSuite()
+    fs = FeatureSuite(num_workers=2)
+    #
+    # print("---- Testing Presmoothing ----")
+    # fs._test_presmoothing((1, 1, 2000, 2000))
+    #
+    # print("---- Testing d0 ----")
+    # fs._test_gradient((1, 1, 2000, 2000), wrt='0')
+    #
+    # print("---- Testing d1 ----")
+    # fs._test_gradient((1, 1, 2000, 2000), wrt='1')
 
-    fs._test_presmoothing((1, 1, 2000, 2000))
-    print("---------------------------------")
+    # print("---- Testing dmag 2D ----")
+    # fs._test_dmag_2d((1, 1, 2000, 2000))
 
-    fs._test_presmoothing((1, 1, 2000, 2000))
-    print("---------------------------------")
+    # print("---- Testing laplacian 2D ----")
+    # fs._test_laplacian_2d((1, 1, 2000, 2000))
 
-    fs._test_presmoothing((1, 1, 2000, 2000))
+    # print("---- Testing eighess 2D ----")
+    # fs._test_eighess_2d((1, 1, 2000, 2000))
+
+    print("---- Testing dsk 2D ----")
+    fs._test_dsk_2d((1, 1, 2000, 2000))
+
+    print("---- Testing dsk 2D ----")
+    fs._test_dsk_2d((1, 1, 2000, 2000))
+
+    print("---- Testing dsk 2D ----")
+    fs._test_dsk_2d((1, 1, 2000, 2000))
+
 
