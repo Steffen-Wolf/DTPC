@@ -11,10 +11,7 @@ def get_filter_function(filter_name):
     elif filter_name == 'Laplacian of Gaussian':
         return vigra.filters.laplacianOfGaussian
     elif filter_name == 'Hessian of Gaussian Eigenvalues':
-        return vigra.filters.gaussianGradientMagnitude
-        # should be ...
         return vigra.filters.hessianOfGaussianEigenvalues
-        # but I can not handle the different size return yet :(
     elif filter_name == 'Gaussian Gradient Magnitude':
         return vigra.filters.gaussianGradientMagnitude
     else:
@@ -34,15 +31,25 @@ def get_filter_size(filter_name):
 
 def dummy_feature_prediciton(request):
     # load data slice in 
+    print request["roi_with_halo"]
     data = load_raw_data(request["data_filename"], request["roi_with_halo"])
     features = request["features"]
     sigmas = np.unique([f['sigma'] for f in features])
     filters = set([f['name'] for f in features])
     shape = list(data.shape)
     shape[0] = len(sigmas)
-    shape[1] = len(filters)
+    shape[1] = np.sum([get_filter_size(f) for f in filters])
     output = np.empty(shape)
     for i, s in enumerate(sigmas):
-        for j, f in enumerate(filters):
-            output[i, j] = get_filter_function(f)(data[0, 0].astype(np.float32), s)
+        j = 0
+        for f in filters:
+            print("computing", f, s)
+            if get_filter_size(f) == 1:
+                output[i, j] = get_filter_function(f)(data[0, 0].astype(np.float32), s)
+                j += 1
+            else:
+                feat = get_filter_function(f)(data[0, 0].astype(np.float32), s)
+                for k in range(get_filter_size(f)):
+                    output[i, j] = feat[...,k]
+                    j += 1
     return output
