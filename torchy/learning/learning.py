@@ -67,5 +67,5 @@ def write_output(data, request):
         print(data.shape)
         print(f["data"][request["roi_output"]].shape)
         hs = request["halo_size"]
-        f["data"][request["roi_output"]] = data[:,:,hs:-hs,hs:-hs,hs:-hs]
+        f["data"][request["roi_output"]] = data
     return "done"

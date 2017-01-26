@@ -3,6 +3,7 @@ from argparse import Namespace
 import time
 import h5py
 import numpy as np
+from itertools import tee
 # from torchy.filters.vigra_filters import get_filter_size
 
 
@@ -96,6 +97,11 @@ def get_feature_index(r):
 def reshape_volume_for_torch(volume):
     assert volume.ndim == 3 or volume.ndim == 2
     return volume[None, None, ...]
+
+def pairwise(iterable):
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
 
 
 if __name__ == '__main__':

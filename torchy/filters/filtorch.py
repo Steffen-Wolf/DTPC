@@ -445,7 +445,8 @@ class FeatureSuite(object):
 
     def process_request(self, request):
         with h5.File(request['data_filename'], 'r+') as h5_file:
-            input_tensor = reshape_volume_for_torch(h5_file[request['roi_with_halo']])
+            print(request['roi_with_halo'])
+            input_tensor = reshape_volume_for_torch(h5_file["volume/data"][request['roi_with_halo']])
         feature_tensor = self.remove_halo(self.compute_features(input_tensor), request['halo_size'])
         return feature_tensor
 

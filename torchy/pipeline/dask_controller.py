@@ -1,8 +1,10 @@
 """This file contains the dask pipeline creation and request handling API"""
 
 from __future__ import print_function
+from __future__ import division
 import numpy as np
-from dask.threaded import get
+from dask.async import get_sync as get
+# from dask.threaded import get
 
 # import vigra
 import json
@@ -10,9 +12,11 @@ import json
 import h5py
 import os
 from glob import glob
+import itertools
 
 from torchy.learning import learning
 from torchy.filters import filters
+from torchy.utils import pairwise
 import torchy.filters.filtorch as filtorch
 
 from torchy.filters import vigra_filters
@@ -27,6 +31,7 @@ class Controller(object):
     def __init__(self):
         self._feature_computer_pool = None
         self._feature_computer_pool_built = False
+        self._max_edge_length = 300
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
@@ -68,7 +73,6 @@ class Controller(object):
 
         if self.output_file is None:
             if_set = set([r["data_filename"] for r in requests])
-            print(if_set)
             if len(if_set) > 1:
                 raise NotImplementedError("Sorry: we can only handle one lane (single input file)")
 
@@ -83,8 +87,10 @@ class Controller(object):
             print("created output file %s" % self.output_file)
 
         if not self._feature_computer_pool_built:
-            self.build_feature_computer_pool(num_computers=len(requests), ndim=3)
+            self.build_feature_computer_pool(num_computers=len(requests), ndim=3, device='cpu')
         
+        requests = self.reduce_edge_size(requests)
+
         if len(requests) > len(self.feature_computer_pool):
             num_new_computers = len(requests) - len(self.feature_computer_pool)
             self.extend_feature_computer_pool(num_new_computers)
@@ -94,12 +100,37 @@ class Controller(object):
             r["output_file_name"] = self.output_file
             dsk["request-%i" % rid] = r
             # should be r["classifier_filename"] when we get the correct json files
-            dsk["RF-File-%i" % rid] = "datasets/hackathon_flyem_forest.h5"
+            dsk["RF-File-%i" % rid] = "datasets/hackathon_flyem_forest_sklearn.dump"
             dsk["computed-features-%i" % rid] = (fc.process_request, "request-%i" % rid)
             dsk["predicted-image-%i"%rid] = (learning.image_prediction, "RF", "RF-File-%i" % rid, 'computed-features-%i' % rid, "request-%i" % rid)
             # dsk["write-%i"%rid] = (writer.write_output, "predicted-image-%i"%rid, "request-%i"%rid)
             self.current_targets.append("predicted-image-%i"%rid)
         self.current_dsk = dsk
+
+    def reduce_edge_size(self, requests):
+        if len(requests) == 0:
+            return
+        ndim = requests[0]["feature_dim"]
+        for i,r in enumerate(requests):
+            edge_lengths = [((r["cutout"][0]["%smax"%c]-r["cutout"][0]["%smin"%c]) // self._max_edge_length,
+                              r["cutout"][0]["%smin"%c], r["cutout"][0]["%smax"%c]) for c in "xyz"[:ndim]]
+
+            splits = []
+            l = edge_lengths[0]
+            # generate the min/ max grid bounds
+            for m in itertools.product(*[pairwise(np.linspace(l[1], l[2], num=l[0]+2, dtype=int)) for l in edge_lengths]):
+                r_slice = r.copy()
+                for k, c in enumerate("xyz"[:ndim]):
+                    r["cutout"][0]["%smin"%c] = m[k][0]
+                    r["cutout"][0]["%smax"%c] = m[k][1]
+                cutout_to_slice(r_slice)
+                splits.append(r_slice)
+
+            # dark python magic to flatten the nested list
+            requests[i] = splits
+            flatten = lambda *args: list(result for mid in args for result in (flatten(*mid)
+                                                if isinstance(mid, (tuple, list)) else (mid,)))
+            return flatten(requests)
 
     def get_results(self):
         return get(self.current_dsk, self.current_targets)
