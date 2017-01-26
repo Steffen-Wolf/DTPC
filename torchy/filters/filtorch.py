@@ -147,11 +147,10 @@ class FeatureSuite(object):
     ONE_BY_SIX = 0.1666667
     ONE_BY_TWO = 0.5
 
-    def __init__(self, ndim=2, reflect_pad_input=True, num_workers=4, device='cpu'):
+    def __init__(self, ndim=2, num_workers=4, device='cpu'):
         assert ndim in [2, 3]
         # Assignments
         self.ndim = ndim
-        self.reflect_pad_input = reflect_pad_input
         self.num_workers = num_workers
         self.cache = {}
         self.device = device
