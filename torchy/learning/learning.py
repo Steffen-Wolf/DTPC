@@ -2,7 +2,10 @@
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from torchy import utils
 import vigra
+import h5py
+import time
 
 def get_classifier(classifier_type, filename=None):
     if classifier_type == 'RandomForest':
@@ -30,16 +33,19 @@ def count_labels(classifier):
     elif isinstance(classifier, RandomForestClassifier):
         return classifier.n_classes_
     else:
-        raise NotImplementedError()  
+        raise NotImplementedError()
 
-def image_prediction(classifier_type, classifier_file_name, features):
+def image_prediction(classifier_type, classifier_file_name, features, request):
+    s_list, f_list = utils.get_feature_index(request)
     classifier = get_classifier(classifier_type, classifier_file_name)
     export_shape = list(features.shape)
     export_shape[0] = 1
     export_shape[1] = count_labels(classifier)
-    predshape = [np.product(features.shape[:2]), np.product(features.shape[2:])]
-    f = features.reshape(predshape).astype(np.float32)
-    return predict(classifier, f.T).reshape(export_shape)
+    predshape = [len(s_list), np.product(features.shape[2:])]
+    f = features[s_list, f_list].reshape(predshape).astype(np.float32)
+    # write to file
+    write_output(predict(classifier, f.T).reshape(export_shape), request)
+    return "done"
 
 def predict(classifier, X_test):
     if isinstance(classifier, vigra.learning.RandomForest):
@@ -48,3 +54,14 @@ def predict(classifier, X_test):
         return classifier.predict_proba(X_test)
     else:
         raise NotImplementedError()
+
+
+def write_output(data, request):
+    print("try writing",request["output_file_name"],request["roi_with_halo"])
+    with h5py.File(request["output_file_name"], "r+") as f:
+        print(f["data"].shape)
+        print(data.shape)
+        print(f["data"][request["roi_output"]].shape)
+        hs = request["halo_size"]
+        f["data"][request["roi_output"]] = data[:,:,hs:-hs,hs:-hs,hs:-hs]
+    return "done"

@@ -3,6 +3,7 @@ from argparse import Namespace
 import time
 import h5py
 import numpy as np
+# from torchy.filters.vigra_filters import get_filter_size
 
 @contextmanager
 def timeit():
@@ -45,3 +46,30 @@ def load_raw_data(filename, slice_with_halo):
         out = np.array(dset[slice_with_halo])
     new_shape = [1, 1] + list(out.shape)
     return out.reshape(new_shape)
+
+def get_filter_size(filter_name):
+    if filter_name == 'Gaussian Smoothing':
+        return 1
+    elif filter_name == 'Laplacian of Gaussian':
+        return 1
+    elif filter_name == 'Hessian of Gaussian Eigenvalues':
+        return 3
+    elif filter_name == 'Gaussian Gradient Magnitude':
+        return 1
+    else:
+        raise NotImplementedError
+
+def get_feature_index(r):
+    """
+    function that returns the slices that generate the feature file in 
+    matching request r
+    """
+    sigmas = np.unique([f['sigma'] for f in r["features"]]).tolist()
+    filters = list(set([f['name'] for f in r["features"]]))
+    s_list = []
+    f_list = []
+    for f in r["features"]:
+        for k in range(get_filter_size(f["name"])):
+            s_list.append(sigmas.index(f["sigma"]))
+            f_list.append(filters.index(f["name"]))
+    return s_list, f_list

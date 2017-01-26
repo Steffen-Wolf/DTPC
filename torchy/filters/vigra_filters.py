@@ -2,7 +2,7 @@
 
 import numpy as np
 import vigra
-from torchy.utils import load_raw_data
+from torchy.utils import load_raw_data, get_filter_size
 
 
 def get_filter_function(filter_name):
@@ -14,18 +14,6 @@ def get_filter_function(filter_name):
         return vigra.filters.hessianOfGaussianEigenvalues
     elif filter_name == 'Gaussian Gradient Magnitude':
         return vigra.filters.gaussianGradientMagnitude
-    else:
-        raise NotImplementedError
-
-def get_filter_size(filter_name):
-    if filter_name == 'Gaussian Smoothing':
-        return 1
-    elif filter_name == 'Laplacian of Gaussian':
-        return 1
-    elif filter_name == 'Hessian of Gaussian Eigenvalues':
-        return 3
-    elif filter_name == 'Gaussian Gradient Magnitude':
-        return 1
     else:
         raise NotImplementedError
 
