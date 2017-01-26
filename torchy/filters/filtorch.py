@@ -20,9 +20,9 @@ torch.set_num_threads(2)
 def to_variable(tensor, device='cpu'):
     if isinstance(tensor, np.ndarray):
         if device == 'cpu':
-            tensor = Variable(torch.from_numpy(tensor))
+            tensor = Variable(torch.from_numpy(tensor.astype('float32')))
         elif device == 'gpu':
-            tensor = Variable(torch.from_numpy(tensor).cuda())
+            tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda())
     return tensor
 
 
@@ -183,7 +183,8 @@ class FeatureSuite(object):
         num_outputs = kernel_tensor.size()[0]
 
         if self.ndim == 3:
-            conved_012 = self.conv(input_tensor, kernel_tensor, padding=padding)
+            conved_012 = self.conv(input_tensor, kernel_tensor, padding=padding,
+                                   bias=bias)
             conved_201 = self.conv(conved_012, kernel_tensor.permute(0, 1, 4, 2, 3),
                                    groups=num_outputs, bias=bias)
             conved_120 = self.conv(conved_201, kernel_tensor.permute(0, 1, 3, 4, 2),
@@ -228,7 +229,13 @@ class FeatureSuite(object):
 
         # No bias for medium kernels (because there's just one feature, i.e. no grouped conv
         # required)
-        med_kernel_bias = None
+        if 'med_kernel_bias' not in self.cache.keys():
+            med_kernel_bias = self.to_variable(np.zeros(shape=len(med_kernel_sigmas)))
+            self.cache.update({'med_kernel_bias': med_kernel_bias})
+        else:
+            med_kernel_bias = self.cache['med_kernel_bias']
+
+        med_kernel_bias = None if self.ndim == 2 else med_kernel_bias
 
         if 'big_kernel_bias' not in self.cache.keys():
             big_kernel_bias = self.to_variable(np.zeros(shape=len(big_kernel_sigmas)))
@@ -271,28 +278,48 @@ class FeatureSuite(object):
         return all_conved
 
     def d0(self, input_tensor):
+        if 'one_channel_bias' in self.cache.keys():
+            one_channel_bias = self.cache['one_channel_bias']
+        else:
+            one_channel_bias = self.to_variable(np.zeros(shape=(1,)))
+            self.cache.update({'one_channel_bias': one_channel_bias})
+        one_channel_bias = None if self.ndim == 2 else one_channel_bias
         # Gradient along axis 0
         input_tensor = Variable(input_tensor)
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        return self.sconv(input_tensor, kernel_tensor, padding=1).data
+        return self.sconv(input_tensor, kernel_tensor, padding=1, bias=one_channel_bias).data
 
     def d1(self, input_tensor):
+        if 'one_channel_bias' in self.cache.keys():
+            one_channel_bias = self.cache['one_channel_bias']
+        else:
+            one_channel_bias = self.to_variable(np.zeros(shape=(1,)))
+            self.cache.update({'one_channel_bias': one_channel_bias})
+        one_channel_bias = None if self.ndim == 2 else one_channel_bias
         # Gradient along axis 1
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
         input_tensor = Variable(input_tensor)
         if self.ndim == 2:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2), padding=1).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2), padding=1,
+                              bias=one_channel_bias).data
         else:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2, 4), padding=1).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2, 4), padding=1,
+                              bias=one_channel_bias).data
 
     def d2(self, input_tensor):
+        if 'one_channel_bias' in self.cache.keys():
+            one_channel_bias = self.cache['one_channel_bias']
+        else:
+            one_channel_bias = self.to_variable(np.zeros(shape=(1,)))
+            self.cache.update({'one_channel_bias': one_channel_bias})
         # Gradient along axis 2
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
         input_tensor = Variable(input_tensor)
         if self.ndim == 2:
             raise RuntimeError
         else:
-            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 4, 2), padding=1).data
+            return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 4, 2), padding=1,
+                              bias=one_channel_bias).data
 
     def dmag(self, *dns):
         if self.ndim == 3:
@@ -346,11 +373,13 @@ class FeatureSuite(object):
             phi = torch.zeros(*detB.size())
             phi[r <= -1] = np.pi * self.ONE_BY_THREE
             phi[r >= 1] = 0.
-            phi[-1 < r < 1] = torch.acos(r[-1 < r < 1]) * self.ONE_BY_THREE
+            phi[-1 < r] = torch.acos(r[-1 < r]) * self.ONE_BY_THREE
+            phi[r < 1] = torch.acos(r[r < 1]) * self.ONE_BY_THREE
 
-            eig1 = T + 2 * p * torch.cos(phi)
-            eig3 = T + 2 * p * torch.cos(phi + ((2. * np.pi) * self.ONE_BY_THREE))
-            eig2 = 3 * T - eig1 - eig3
+            p_times_two = p * 2.
+            eig1 = T + p_times_two * torch.cos(phi)
+            eig3 = T + p_times_two * torch.cos(phi + ((2. * np.pi) * self.ONE_BY_THREE))
+            eig2 = 3. * T - eig1 - eig3
             return torch.cat((eig1, eig2, eig3), 1)
 
         else:
@@ -456,6 +485,21 @@ class FeatureSuite(object):
         print("Input shape: {} || Output shape: {}".format(presmoothed.size(), gmag.size()))
         print("Elapsed time: {}".format(timestats.elapsed_time))
 
+    def _test_dmag_3d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Compute gradients
+        g0 = self.d0(presmoothed)
+        g1 = self.d1(presmoothed)
+        g2 = self.d1(presmoothed)
+        # Compute gradient magnitude
+        with timeit() as timestats:
+            gmag = self.dmag(g0, g1, g2)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), gmag.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
     def _test_laplacian_2d(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
         # Presmooth
@@ -485,12 +529,34 @@ class FeatureSuite(object):
 
         # Compute and time laplacian
         with timeit() as timestats:
-            eighess = self.laplacian(g00, g01, g11)
+            eighess = self.eighess(g00, g01, g11)
 
         print("Input shape: {} || Output shape: {}".format(presmoothed.size(), eighess.size()))
         print("Elapsed time: {}".format(timestats.elapsed_time))
 
-    def _test_dsk_2d(self, input_shape):
+    def _test_eighess_3d(self, input_shape):
+        input_array = np.random.uniform(size=input_shape)
+        # Presmooth
+        presmoothed = self.presmoothing(input_array)
+        # Compute gradients
+        g0 = self.d0(presmoothed)
+        g1 = self.d1(presmoothed)
+        g2 = self.d2(presmoothed)
+        g00 = self.d0(g0)
+        g01 = self.d1(g0)
+        g02 = self.d2(g0)
+        g11 = self.d1(g1)
+        g12 = self.d2(g1)
+        g22 = self.d2(g2)
+
+        # Compute and time laplacian
+        with timeit() as timestats:
+            eighess = self.eighess(g00, g01, g02, g11, g12, g22)
+
+        print("Input shape: {} || Output shape: {}".format(presmoothed.size(), eighess.size()))
+        print("Elapsed time: {}".format(timestats.elapsed_time))
+
+    def _test_dsk(self, input_shape):
         input_array = np.random.uniform(size=input_shape)
         print("[+] Starting dsk computation...")
         with timeit() as timestats:
@@ -501,8 +567,8 @@ class FeatureSuite(object):
 
 
 if __name__ == '__main__':
-    fs = FeatureSuite(num_workers=2)
-    #
+    fs = FeatureSuite(ndim=3, num_workers=2)
+
     # print("---- Testing Presmoothing ----")
     # fs._test_presmoothing((1, 1, 2000, 2000))
     #
@@ -521,13 +587,26 @@ if __name__ == '__main__':
     # print("---- Testing eighess 2D ----")
     # fs._test_eighess_2d((1, 1, 2000, 2000))
 
-    print("---- Testing dsk 2D ----")
-    fs._test_dsk_2d((1, 1, 2000, 2000))
+    # print("---- Testing dsk 2D ----")
+    # fs._test_dsk((1, 1, 2000, 2000))
 
-    print("---- Testing dsk 2D ----")
-    fs._test_dsk_2d((1, 1, 2000, 2000))
+    # print("---- Testing dsk 2D ----")
+    # fs._test_dsk((1, 1, 2000, 2000))
 
-    print("---- Testing dsk 2D ----")
-    fs._test_dsk_2d((1, 1, 2000, 2000))
+    # print("---- Testing dsk 2D ----")
+    # fs._test_dsk((1, 1, 2000, 2000))
 
+    # print("---- Testing Presmoothing 3D ----")
+    # fs._test_presmoothing((1, 1, 100, 100, 100))
 
+    # print("---- Testing d0 3D ----")
+    # fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
+
+    # print("---- Testing dmag 3D ----")
+    # fs._test_dmag_3d((1, 1, 100, 100, 100))
+
+    # print("---- Testing eighess3D ----")
+    # fs._test_eighess_3d((1, 1, 100, 100, 100))
+
+    print("---- Testing dsk 3D ----")
+    fs._test_dsk((1, 1, 300, 300, 300))
