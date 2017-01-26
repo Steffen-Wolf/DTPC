@@ -82,6 +82,9 @@ class Controller(object):
                 f.create_dataset("data", prediction_shape)
             print("created output file %s" % self.output_file)
 
+        if not self._feature_computer_pool_built:
+            self.build_feature_computer_pool(num_computers=len(requests), ndim=3)
+        
         if len(requests) > len(self.feature_computer_pool):
             num_new_computers = len(requests) - len(self.feature_computer_pool)
             self.extend_feature_computer_pool(num_new_computers)
