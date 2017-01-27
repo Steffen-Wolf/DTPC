@@ -175,6 +175,9 @@ class FeatureSuite(object):
     def deactivate_global_gpu_lock(self):
         self._global_gpu_lock = None
 
+    def share_gpu_lock(self, other):
+        other._global_gpu_lock = self._global_gpu_lock
+
     @property
     def conv(self):
         return conv2d if self.ndim == 2 else conv3d
@@ -473,9 +476,11 @@ class FeatureSuite(object):
 
     def process_request(self, request):
         with h5.File(request['data_filename'], 'r+') as h5_file:
-            print(request['roi_with_halo'])
             input_tensor = reshape_volume_for_torch(h5_file["volume/data"][request['roi_with_halo']])
-        feature_tensor = self.remove_halo(self.compute_features(input_tensor), request['halo_size'])
+        # Compute features with a global lock
+        with self.global_gpu_lock:
+            feature_tensor = self.compute_features(input_tensor)
+        feature_tensor = self.remove_halo(feature_tensor, request['halo_size'])
         return feature_tensor
 
     def _test_presmoothing(self, input_shape):
