@@ -28,17 +28,18 @@ class Controller(object):
     Controller class that does the dask book keeping and 
     transforms request to a dask graph
     """
-    def __init__(self, num_workers=2):
+    def __init__(self, options):
         self._feature_computer_pool = None
         self._feature_computer_pool_built = False
-        self._max_edge_length = 300
+        self._max_edge_length = options.max_edge_length
         self._global_gpu_lock = Lock()
-        self.num_workers = num_workers
+        self.num_workers = options.num_workers
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
-        self.classifier_type = "RandomForest"
+        self.classifier_type = options.classifier_type
         self.output_file = None
+        self.options = options
 
     def clear_dsk(self):
         self.current_targets = []
