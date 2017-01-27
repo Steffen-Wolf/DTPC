@@ -84,8 +84,10 @@ class Controller(object):
             self.output_file = "results/full_prediction.h5"
             with h5py.File(self.output_file, "w") as f:
                 with h5py.File(if_set.pop(), "r") as raw_f:
-                    # TODO: replace the RF location by json defined file path
-                    rf_file = "datasets/hackathon_flyem_forest_sklearn.dump"
+                    if self.options.rf_source == "from_request":
+                        rf_file = requests[0]["classifier_filename"]
+                    else:
+                        rf_file = self.options.rf_source
                     n_classes = learning.count_labels(learning.get_classifier(self.classifier_type, filename=rf_file))
                     prediction_shape = [1, n_classes] + list(raw_f["volume/data"].shape)[:-1]
                 f.create_dataset("data", prediction_shape)
@@ -104,8 +106,7 @@ class Controller(object):
             rid = r["req_id"]
             r["output_file_name"] = self.output_file
             dsk["request-%i" % rid] = r
-            # should be r["classifier_filename"] when we get the correct json files
-            dsk["RF-File-%i" % rid] = "datasets/hackathon_flyem_forest_sklearn.dump"
+            dsk["RF-File-%i" % rid] = r["classifier_filename"]
             dsk["computed-features-%i" % rid] = (fc.process_request, "request-%i" % rid)
             dsk["predicted-image-%i"%rid] = (learning.image_prediction, "RF", "RF-File-%i" % rid, 'computed-features-%i' % rid, "request-%i" % rid)
             # dsk["write-%i"%rid] = (writer.write_output, "predicted-image-%i"%rid, "request-%i"%rid)
