@@ -150,10 +150,11 @@ class FeatureSuite(object):
     ONE_BY_SIX = 0.1666667
     ONE_BY_TWO = 0.5
 
-    def __init__(self, ndim=2, num_workers=4, device='cpu'):
+    def __init__(self, ndim=2, num_workers=4, device='cpu', global_gpu_lock=None):
         assert ndim in [2, 3]
         self._global_gpu_lock = None
         self._eighess_on = None
+        self._global_gpu_lock = global_gpu_lock
         # Assignments
         self.ndim = ndim
         self.num_workers = num_workers

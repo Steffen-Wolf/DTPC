@@ -19,7 +19,7 @@ from torchy.filters import filters
 from torchy.utils import pairwise
 import torchy.filters.filtorch as filtorch
 
-from torchy.filters import vigra_filters
+from threading import Lock
 # from torchy.pipeline import writer
 
 
@@ -32,6 +32,7 @@ class Controller(object):
         self._feature_computer_pool = None
         self._feature_computer_pool_built = False
         self._max_edge_length = 300
+        self._global_gpu_lock = Lock()
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
@@ -43,11 +44,12 @@ class Controller(object):
         self.current_dsk = {}
         self.current_requests = None
 
-    def build_feature_computer_pool(self, num_computers=10, ndim=3, num_workers_per_computer=2,
+    def build_feature_computer_pool(self, num_computers=10, ndim=3, num_workers_per_computer=1,
                                     device='cpu'):
         """Build feature computer pool."""
         self._feature_computer_pool = [filtorch.FeatureSuite(num_workers=num_workers_per_computer,
-                                                             ndim=ndim, device=device)
+                                                             ndim=ndim, device=device,
+                                                             global_gpu_lock=self._global_gpu_lock)
                                        for _ in range(num_computers)]
         self._feature_computer_pool_built = True
 
@@ -58,7 +60,8 @@ class Controller(object):
         ndim = fcp[0].ndim
         device = fcp[0].device
         self._feature_computer_pool.extend([filtorch.FeatureSuite(num_workers=num_workers_per_computer,
-                                                                  ndim=ndim, device=device)
+                                                                  ndim=ndim, device=device,
+                                                                  global_gpu_lock=self._global_gpu_lock)
                                             for _ in range(by)])
 
     @property

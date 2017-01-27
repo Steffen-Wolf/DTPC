@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from argparse import Namespace
+
 import time
 import h5py
 import numpy as np
@@ -36,6 +37,11 @@ def simulate_delay(duration):
             return function(*args, **kwargs)
         return _function
     return _decorator
+
+
+@contextmanager
+def no_lock():
+    yield
 
 
 def load_raw_data(filename, slice_with_halo):
