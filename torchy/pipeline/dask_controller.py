@@ -28,11 +28,12 @@ class Controller(object):
     Controller class that does the dask book keeping and 
     transforms request to a dask graph
     """
-    def __init__(self):
+    def __init__(self, num_workers=2):
         self._feature_computer_pool = None
         self._feature_computer_pool_built = False
         self._max_edge_length = 300
         self._global_gpu_lock = Lock()
+        self.num_workers = num_workers
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
@@ -136,7 +137,7 @@ class Controller(object):
             return flatten(requests)
 
     def get_results(self):
-        return get(self.current_dsk, self.current_targets)
+        return get(self.current_dsk, self.current_targets, num_workers=self.num_workers)
 
     def get_request(self):
         return self.current_requests
