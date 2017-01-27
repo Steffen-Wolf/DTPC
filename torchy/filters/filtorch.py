@@ -12,9 +12,10 @@ from torch.autograd.variable import Variable
 from dask.async import get_sync as get
 # from dask.multiprocessing import get
 
-from torchy.utils import timeit, reshape_volume_for_torch
+from torchy.utils import timeit, reshape_volume_for_torch, no_lock
+from threading import Lock
 
-torch.set_num_threads(2)
+torch.set_num_threads(16)
 
 
 def to_variable(tensor, device='cpu'):
@@ -151,11 +152,28 @@ class FeatureSuite(object):
 
     def __init__(self, ndim=2, num_workers=4, device='cpu'):
         assert ndim in [2, 3]
+        self._global_gpu_lock = None
+        self._eighess_on = None
         # Assignments
         self.ndim = ndim
         self.num_workers = num_workers
         self.cache = {}
         self.device = device
+
+    @property
+    def global_gpu_lock(self):
+        return no_lock() if self._global_gpu_lock is None or self.device == 'cpu' \
+            else self._global_gpu_lock
+
+    @global_gpu_lock.setter
+    def global_gpu_lock(self, value):
+        self._global_gpu_lock = value
+
+    def activate_global_gpu_lock(self):
+        self._global_gpu_lock = Lock()
+
+    def deactivate_global_gpu_lock(self):
+        self._global_gpu_lock = None
 
     @property
     def conv(self):
@@ -205,6 +223,13 @@ class FeatureSuite(object):
 
     def to_variable(self, tensor):
         return to_variable(tensor, device=self.device)
+
+    def to_torch_tensor(self, numpy_tensor, device=None):
+        device = self.device if device is None else device
+        if device == 'gpu':
+            return torch.from_numpy(numpy_tensor.astype('float32')).cuda()
+        else:
+            return torch.from_numpy(numpy_tensor.astype('float32'))
 
     def presmoothing(self, input_tensor):
 
@@ -370,7 +395,7 @@ class FeatureSuite(object):
                    B02 * (B01 * B12 - B11 * B02)
             r = detB * self.ONE_BY_TWO
 
-            phi = torch.zeros(*detB.size())
+            phi = self.to_torch_tensor(np.zeros(shape=tuple(detB.size())), device=self._eighess_on)
             phi[r <= -1] = np.pi * self.ONE_BY_THREE
             phi[r >= 1] = 0.
             phi[-1 < r] = torch.acos(r[-1 < r]) * self.ONE_BY_THREE
@@ -391,6 +416,9 @@ class FeatureSuite(object):
             eig1 = T_by_2 + K
             eig2 = T_by_2 - K
             return torch.cat((eig1, eig2), 1)
+
+    def gpu_to_cpu(self, *inputs):
+        return tuple(_input.cpu() for _input in inputs) if len(inputs) > 1 else inputs[0].cpu()
 
     def process_dsk_output(self, *input_features):
         if self.device == 'cpu':
@@ -457,7 +485,7 @@ class FeatureSuite(object):
             presmoothed = self.presmoothing(input_array)
 
         print("Input shape: {} || Output shape: {}".format(input_shape, presmoothed.size()))
-        print("Elapsed time: {}".format(timestats.elapsed_time))
+        print("Elapsed time on {}: {}".format(self.device, timestats.elapsed_time))
 
     def _test_gradient(self, input_shape, wrt='0'):
         input_array = np.random.uniform(size=input_shape)
@@ -568,7 +596,8 @@ class FeatureSuite(object):
 
 
 if __name__ == '__main__':
-    fs = FeatureSuite(ndim=3, num_workers=6, device='cpu')
+    fs = FeatureSuite(ndim=3, num_workers=2, device='gpu')
+    fs.activate_global_gpu_lock()
 
     # print("---- Testing Presmoothing ----")
     # fs._test_presmoothing((1, 1, 2000, 2000))
@@ -609,5 +638,5 @@ if __name__ == '__main__':
     # print("---- Testing eighess3D ----")
     # fs._test_eighess_3d((1, 1, 100, 100, 100))
 
-    # print("---- Testing dsk 3D ----")
-    # fs._test_dsk((1, 1, 200, 200, 200))
+    print("---- Testing dsk 3D ----")
+    fs._test_dsk((1, 1, 200, 200, 200))
