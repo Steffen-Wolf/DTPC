@@ -45,6 +45,7 @@ class Controller(object):
         self.current_dsk = {}
         self.current_requests = None
         self.classifier_type = options.classifier_type
+        self.halo_size = options.halo_size
         self.output_file = None
         self.options = options
 
@@ -88,7 +89,7 @@ class Controller(object):
             if len(if_set) > 1:
                 raise NotImplementedError("Sorry: we can only handle one lane (single input file)")
 
-            self.output_file = "/media/nrahaman/f247b744-8a24-4067-9bb4-81b19573ed79/nrahaman/hackathonshit/result"
+            self.output_file = "results/"
             # with h5py.File(self.output_file, "w") as f:
             #     with h5py.File(if_set.pop(), "r") as raw_f:
             #         if self.options.rf_source == "from_request":
@@ -127,6 +128,7 @@ class Controller(object):
             return
         ndim = requests[0]["feature_dim"]
         for i,r in enumerate(requests):
+            # assert(self._max_edge_length > r["halo_size"])
             edge_lengths = [((r["cutout"][0]["%smax"%c]-r["cutout"][0]["%smin"%c]) // self._max_edge_length,
                               r["cutout"][0]["%smin"%c], r["cutout"][0]["%smax"%c]) for c in "xyz"[:ndim]]
 
@@ -157,15 +159,15 @@ class Controller(object):
         return self.current_requests
 
 
-def fetch_new_requests(base_name):
-    requests = []
-    for json_file_name in glob(base_name):
-        with open(json_file_name) as data_file:    
-            data = json.load(data_file)
-            data["halo_size"] = 20
-            cutout_to_slice(data)
-            requests.append(data)
-    return requests
+    def fetch_new_requests(self, base_name):
+        requests = []
+        for json_file_name in glob(base_name):
+            with open(json_file_name) as data_file:    
+                data = json.load(data_file)
+                data["halo_size"] = self.halo_size
+                cutout_to_slice(data)
+                requests.append(data)
+        return requests
 
 
 def m(xyz):

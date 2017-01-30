@@ -52,9 +52,8 @@ def count_labels(classifier):
 def image_prediction(classifier_type, classifier_file_name, features, request):
     s_list, f_list = utils.get_feature_index(request)
     classifier = get_classifier(classifier_type, classifier_file_name)
-    export_shape = list(features.shape)
-    export_shape[0] = 1
-    export_shape[1] = count_labels(classifier)
+    export_shape = list(features.shape[2:])
+    export_shape.append(count_labels(classifier))
     predshape = [len(s_list), np.product(features.shape[2:])]
     f = features[s_list, f_list].reshape(predshape).astype(np.float32)
     # write to file

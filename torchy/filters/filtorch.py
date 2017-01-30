@@ -8,8 +8,8 @@ import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
 
-from dask.threaded import get
-# from dask.async import get_sync as get
+# from dask.threaded import get
+from dask.async import get_sync as get
 # from dask.multiprocessing import get
 
 from torchy.utils import timeit, reshape_volume_for_torch, no_lock
