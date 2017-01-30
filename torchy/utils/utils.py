@@ -79,7 +79,7 @@ def get_feature_index(r):
     feature_names_to_index = {'Gaussian Smoothing': [0],
                               'Gaussian Gradient Magnitude': [1],
                               'Laplacian of Gaussian': [2],
-                              'Hessian of Gaussian Eigenvalues': [3, 4]}
+                              'Hessian of Gaussian Eigenvalues': [3, 4, 5]}
 
     sigma_to_index = {0.3: [0],
                       0.7: [1],

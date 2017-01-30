@@ -8,8 +8,8 @@ import torch
 from torch.nn.functional import conv2d, conv3d
 from torch.autograd.variable import Variable
 
-# from dask.threaded import get
-from dask.async import get_sync as get
+from dask.threaded import get
+# from dask.async import get_sync as get
 # from dask.multiprocessing import get
 
 from torchy.utils import timeit, reshape_volume_for_torch, no_lock
@@ -25,6 +25,11 @@ def to_variable(tensor, device='cpu'):
         elif device == 'gpu':
             tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda())
     return tensor
+
+
+def toh5(data, path, datapath='data'):
+    with h5.File(path, 'w') as f:
+        f.create_dataset(datapath, data=data)
 
 
 class FeatureSuite(object):
@@ -478,6 +483,7 @@ class FeatureSuite(object):
     def process_request(self, request):
         with h5.File(request['data_filename'], 'r+') as h5_file:
             input_tensor = reshape_volume_for_torch(h5_file["volume/data"][request['roi_with_halo']])
+        print("Computing features on dataset of shape {}".format(input_tensor.shape))
         # Compute features with a global lock
         with self.global_gpu_lock:
             feature_tensor = self.compute_features(input_tensor)
@@ -632,8 +638,8 @@ if __name__ == '__main__':
     # print("---- Testing dsk 2D ----")
     # fs._test_dsk((1, 1, 2000, 2000))
 
-    print("---- Testing Presmoothing 3D ----")
-    fs._test_presmoothing((1, 1, 200, 200, 200))
+    # print("---- Testing Presmoothing 3D ----")
+    # fs._test_presmoothing((1, 1, 200, 200, 200))
 
     # print("---- Testing d0 3D ----")
     # fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
