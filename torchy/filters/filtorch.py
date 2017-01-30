@@ -7,7 +7,6 @@ import h5py as h5
 import torch
 import torch.nn.functional as F
 from torch.autograd.variable import Variable
-from torch.nn._functions.conv import ConvNd, _view3d, _view4d
 
 from dask.threaded import get
 # from dask.async import get_sync as get
@@ -46,6 +45,9 @@ def to_variable(tensor, device='cpu'):
         elif device == 'gpu':
             tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda(),
                               requires_grad=False, volatile=True)
+    elif isinstance(tensor, torch.Tensor):
+        tensor = Variable(tensor, requires_grad=False, volatile=True)
+
     return tensor
 
 
@@ -660,11 +662,11 @@ if __name__ == '__main__':
     # print("---- Testing dsk 2D ----")
     # fs._test_dsk((1, 1, 2000, 2000))
 
-    print("---- Testing Presmoothing 3D ----")
-    fs._test_presmoothing((1, 1, 100, 100, 100))
+    # print("---- Testing Presmoothing 3D ----")
+    # fs._test_presmoothing((1, 1, 100, 100, 100))
 
-    # print("---- Testing d0 3D ----")
-    # fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
+    print("---- Testing d0 3D ----")
+    fs._test_gradient((1, 1, 100, 100, 100), wrt='0')
 
     # print("---- Testing dmag 3D ----")
     # fs._test_dmag_3d((1, 1, 100, 100, 100))
