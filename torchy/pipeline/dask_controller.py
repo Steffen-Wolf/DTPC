@@ -129,8 +129,11 @@ class Controller(object):
             return
         ndim = requests[0]["feature_dim"]
         for i,r in enumerate(requests):
-            edge_lengths = [((r["cutout"][0]["%smax"%c]-r["cutout"][0]["%smin"%c]) // self._max_edge_length,
-                              r["cutout"][0]["%smin"%c], r["cutout"][0]["%smax"%c]) for c in "xyz"[:ndim]]
+            max_edge_length = [self._max_edge_length] * 3 if isinstance(self._max_edge_length, int) \
+                else self._max_edge_length
+            edge_lengths = [((r["cutout"][0]["%smax"%c]-r["cutout"][0]["%smin"%c]) // _dim_mel,
+                              r["cutout"][0]["%smin"%c], r["cutout"][0]["%smax"%c])
+                            for c, _dim_mel in zip("xyz"[:ndim], max_edge_length[:ndim])]
 
             splits = []
             l = edge_lengths[0]
