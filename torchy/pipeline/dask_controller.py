@@ -16,7 +16,7 @@ import itertools
 
 from torchy.learning import learning
 from torchy.filters import filters
-from torchy.utils import pairwise
+from torchy.utils import pairwise, no_lock
 import torchy.filters.filtorch as filtorch
 
 from threading import Lock
@@ -39,12 +39,14 @@ class Controller(object):
         self._feature_computer_pool = None
         self._feature_computer_pool_built = False
         self._max_edge_length = options.max_edge_length
+        # self._global_gpu_lock = None
         self._global_gpu_lock = Lock()
         self.num_workers = options.num_workers
         self.current_targets = []
         self.current_dsk = {}
         self.current_requests = None
         self.classifier_type = options.classifier_type
+        self.halo_size = options.halo_size
         self.output_file = None
         self.options = options
 
@@ -79,7 +81,7 @@ class Controller(object):
  
     def process_requests(self, json_base_name):
         self.clear_dsk()
-        requests = fetch_new_requests(json_base_name)
+        requests = self.fetch_new_requests(json_base_name)
         dsk = {"RF": self.classifier_type}
         self.current_requests = requests
 
@@ -134,6 +136,7 @@ class Controller(object):
             l = edge_lengths[0]
             # generate the min/ max grid bounds
             for m in itertools.product(*[pairwise(np.linspace(l[1], l[2], num=l[0]+2, dtype=int)) for l in edge_lengths]):
+                print("m",m)
                 r_slice = r.copy()
                 r_slice['req_id'] = id_generator()
 
@@ -156,16 +159,15 @@ class Controller(object):
     def get_request(self):
         return self.current_requests
 
-
-def fetch_new_requests(base_name):
-    requests = []
-    for json_file_name in glob(base_name):
-        with open(json_file_name) as data_file:    
-            data = json.load(data_file)
-            data["halo_size"] = 20
-            cutout_to_slice(data)
-            requests.append(data)
-    return requests
+    def fetch_new_requests(self, base_name):
+        requests = []
+        for json_file_name in glob(base_name):
+            with open(json_file_name) as data_file:
+                data = json.load(data_file)
+                data["halo_size"] = self.halo_size
+                cutout_to_slice(data)
+                requests.append(data)
+        return requests
 
 
 def m(xyz):
