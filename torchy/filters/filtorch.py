@@ -341,7 +341,7 @@ class FeatureSuite(object):
             self.cache.update({'one_channel_bias': one_channel_bias})
         one_channel_bias = None if self.ndim == 2 else one_channel_bias
         # Gradient along axis 0
-        input_tensor = Variable(input_tensor)
+        input_tensor = to_variable(input_tensor)
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
         return self.sconv(input_tensor, kernel_tensor, padding=1, bias=one_channel_bias).data
 
@@ -354,7 +354,7 @@ class FeatureSuite(object):
         one_channel_bias = None if self.ndim == 2 else one_channel_bias
         # Gradient along axis 1
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        input_tensor = Variable(input_tensor)
+        input_tensor = to_variable(input_tensor)
         if self.ndim == 2:
             return self.sconv(input_tensor, kernel_tensor.permute(0, 1, 3, 2), padding=1,
                               bias=one_channel_bias).data
@@ -370,7 +370,7 @@ class FeatureSuite(object):
             self.cache.update({'one_channel_bias': one_channel_bias})
         # Gradient along axis 2
         kernel_tensor = self.stack_filters(self.DERIVATIVE_KERNEL[None])
-        input_tensor = Variable(input_tensor)
+        input_tensor = to_variable(input_tensor)
         if self.ndim == 2:
             raise RuntimeError
         else:
