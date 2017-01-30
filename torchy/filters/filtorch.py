@@ -42,10 +42,10 @@ def to_variable(tensor, device='cpu'):
     if isinstance(tensor, np.ndarray):
         if device == 'cpu':
             tensor = Variable(torch.from_numpy(tensor.astype('float32')),
-                              requires_grad=False)
+                              requires_grad=False, volatile=True)
         elif device == 'gpu':
             tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda(),
-                              requires_grad=False)
+                              requires_grad=False, volatile=True)
     return tensor
 
 
