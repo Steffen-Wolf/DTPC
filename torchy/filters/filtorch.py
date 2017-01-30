@@ -5,8 +5,9 @@ import numpy as np
 import h5py as h5
 
 import torch
-from torch.nn.functional import conv2d, conv3d
+import torch.nn.functional as F
 from torch.autograd.variable import Variable
+from torch.nn._functions.conv import ConvNd, _view3d, _view4d
 
 from dask.threaded import get
 # from dask.async import get_sync as get
@@ -16,6 +17,25 @@ from torchy.utils import timeit, reshape_volume_for_torch, no_lock
 from threading import Lock
 
 torch.set_num_threads(16)
+
+
+# <MONKEY BUSINESS>
+class FastConvNd(ConvNd):
+    def forward(self, input, weight, bias=None):
+        k = input.dim()
+        # This is the (not so) magical line :
+        # self.save_for_backward(input, weight, bias)
+        if k == 3:
+            input, weight = _view4d(input, weight)
+        output = self._update_output(input, weight, bias)
+        if k == 3:
+            output, = _view3d(output)
+        return output
+
+# Monkey patch
+F.ConvNd = FastConvNd
+
+# </MONKEY BUSINESS>
 
 
 def to_variable(tensor, device='cpu'):
@@ -186,7 +206,7 @@ class FeatureSuite(object):
 
     @property
     def conv(self):
-        return conv2d if self.ndim == 2 else conv3d
+        return F.conv2d if self.ndim == 2 else F.conv3d
 
     def stack_filters(self, *filters, **kwargs):
         convert_to_variable = kwargs.get('convert_to_variable', True)
@@ -608,8 +628,8 @@ class FeatureSuite(object):
 
 
 if __name__ == '__main__':
-    fs = FeatureSuite(ndim=3, num_workers=2, device='gpu')
-    fs.activate_global_gpu_lock()
+    fs = FeatureSuite(ndim=3, num_workers=2, device='cpu')
+    # fs.activate_global_gpu_lock()
 
     # print("---- Testing Presmoothing ----")
     # fs._test_presmoothing((1, 1, 2000, 2000))
@@ -638,8 +658,8 @@ if __name__ == '__main__':
     # print("---- Testing dsk 2D ----")
     # fs._test_dsk((1, 1, 2000, 2000))
 
-    # print("---- Testing Presmoothing 3D ----")
-    # fs._test_presmoothing((1, 1, 200, 200, 200))
+    print("---- Testing Presmoothing 3D ----")
+    fs._test_presmoothing((1, 1, 100, 100, 100))
 
     # print("---- Testing d0 3D ----")
     # fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
@@ -650,5 +670,5 @@ if __name__ == '__main__':
     # print("---- Testing eighess3D ----")
     # fs._test_eighess_3d((1, 1, 100, 100, 100))
 
-    print("---- Testing dsk 3D ----")
-    fs._test_dsk((1, 1, 200, 200, 200))
+    # print("---- Testing dsk 3D ----")
+    # fs._test_dsk((1, 1, 200, 200, 200))
