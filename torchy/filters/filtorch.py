@@ -19,31 +19,33 @@ from threading import Lock
 torch.set_num_threads(16)
 
 
-# <MONKEY BUSINESS>
-class FastConvNd(ConvNd):
-    def forward(self, input, weight, bias=None):
-        k = input.dim()
-        # This is the (not so) magical line :
-        # self.save_for_backward(input, weight, bias)
-        if k == 3:
-            input, weight = _view4d(input, weight)
-        output = self._update_output(input, weight, bias)
-        if k == 3:
-            output, = _view3d(output)
-        return output
-
-# Monkey patch
-F.ConvNd = FastConvNd
-
-# </MONKEY BUSINESS>
+# # <MONKEY BUSINESS>
+# class FastConvNd(ConvNd):
+#     def forward(self, input, weight, bias=None):
+#         k = input.dim()
+#         # This is the (not so) magical line :
+#         # self.save_for_backward(input, weight, bias)
+#         if k == 3:
+#             input, weight = _view4d(input, weight)
+#         output = self._update_output(input, weight, bias)
+#         if k == 3:
+#             output, = _view3d(output)
+#         return output
+#
+# # Monkey patch
+# F.ConvNd = FastConvNd
+#
+# # </MONKEY BUSINESS>
 
 
 def to_variable(tensor, device='cpu'):
     if isinstance(tensor, np.ndarray):
         if device == 'cpu':
-            tensor = Variable(torch.from_numpy(tensor.astype('float32')))
+            tensor = Variable(torch.from_numpy(tensor.astype('float32')),
+                              requires_grad=False)
         elif device == 'gpu':
-            tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda())
+            tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda(),
+                              requires_grad=False)
     return tensor
 
 
