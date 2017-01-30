@@ -45,7 +45,7 @@ def to_variable(tensor, device='cpu'):
         elif device == 'gpu':
             tensor = Variable(torch.from_numpy(tensor.astype('float32')).cuda(),
                               requires_grad=False, volatile=True)
-    elif isinstance(tensor, torch.Tensor):
+    elif isinstance(tensor, torch.Tensor) or isinstance(tensor, torch.cuda._TensorBase):
         tensor = Variable(tensor, requires_grad=False, volatile=True)
 
     return tensor
@@ -666,7 +666,7 @@ if __name__ == '__main__':
     # fs._test_presmoothing((1, 1, 100, 100, 100))
 
     print("---- Testing d0 3D ----")
-    fs._test_gradient((1, 1, 100, 100, 100), wrt='0')
+    fs._test_gradient((1, 1, 100, 100, 100), wrt='2')
 
     # print("---- Testing dmag 3D ----")
     # fs._test_dmag_3d((1, 1, 100, 100, 100))
